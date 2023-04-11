@@ -34,9 +34,13 @@ import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import android.view.GestureDetector
+import android.view.MotionEvent
+import androidx.core.view.GestureDetectorCompat
+import java.lang.Math.abs
 
 
-class MainActivity : AppCompatActivity(),TextToSpeech.OnInitListener {
+class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private var imageCapture: ImageCapture? = null
     private lateinit var outputDirectory: File
@@ -50,7 +54,7 @@ class MainActivity : AppCompatActivity(),TextToSpeech.OnInitListener {
     var dataPath: String = "" //데이터 경로 변수 선언
 
     private var tts: TextToSpeech? = null
-
+    var detector: GestureDetectorCompat? = null
     private val requestPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
             if (isGranted) {
@@ -84,7 +88,6 @@ class MainActivity : AppCompatActivity(),TextToSpeech.OnInitListener {
         cameraExecutor = Executors.newSingleThreadExecutor()
 
         // Set up the capture button click listener
-        binding.captureButton.setOnClickListener { takePhoto() }
 
 
 
@@ -97,9 +100,45 @@ class MainActivity : AppCompatActivity(),TextToSpeech.OnInitListener {
         tess = TessBaseAPI() //api준비
         tess.init(dataPath, lang) //해당 사용할 언어데이터로 초기화
 
-binding.ttsButton.setOnClickListener{
-    speakOut()
-}
+        detector = GestureDetectorCompat(this, object : GestureDetector.SimpleOnGestureListener() {
+
+
+
+            override fun onSingleTapUp(e: MotionEvent): Boolean {
+                Log.d("JIWOUNG","ewfnwwe:  "+"11")
+                takePhoto()
+                return true
+            }
+
+            override fun onFling(e1: MotionEvent, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
+                // Handle the fling gesture here
+                val deltaX = e2.x - e1.x
+                val deltaY = e2.y - e1.y
+                if (abs(deltaX) > abs(deltaY) && abs(deltaX) > binding.captureButton.width / 2 && abs(velocityX) > 200) {
+                    if (deltaX < 0) {
+                        // Handle the fling gesture from right to left here
+                        Log.d("JIWOUNG","ewfnwwe:  "+"right-left")
+                        showToast("음성을 다시 재생합니다.")
+speakOut()
+                    }else if ( deltaX>0){
+                        Log.d("JIWOUNG","ewfnwwe:  "+"left-right")
+                      savePhoto()
+                        showToast("사진을 저장합니다.")
+
+                    }
+                }
+                Log.d("JIWOUNG","fliehc")
+                return true
+            }
+
+        })
+
+        binding.captureButton.setOnTouchListener(object : View.OnTouchListener {
+            override fun onTouch(v: View?, event: MotionEvent?): Boolean {
+                event?.let { detector?.onTouchEvent(it) };
+                return true
+            }
+        })
 
     }
 
@@ -144,7 +183,7 @@ binding.ttsButton.setOnClickListener{
 
     private fun takePhoto() {
         // Get a file to save the image
-        val photoFile = File(
+         photoFile = File(
             outputDirectory,
             SimpleDateFormat(
                 FILENAME_FORMAT,
@@ -169,39 +208,9 @@ binding.ttsButton.setOnClickListener{
                         binding.imageView.setImageURI(savedUri)
                         val bitmap = binding.imageView.drawable.toBitmap()
                         // OCR 동작 버튼
-                        binding.ocrButton.setOnClickListener {
-                            Log.d("JIWOUNG", "checkstart")
-                            processImage(bitmap)
 
-                        }
+                        processImage(bitmap)
 
-
-                        val contentResolver = applicationContext.contentResolver
-                        val contentValues = ContentValues().apply {
-                            put(MediaStore.MediaColumns.DISPLAY_NAME, photoFile.name)
-                            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-                            put(
-                                MediaStore.MediaColumns.RELATIVE_PATH,
-                                Environment.DIRECTORY_PICTURES
-                            )
-                            put(MediaStore.Images.Media.IS_PENDING, 1)
-                        }
-                        val imageUri = contentResolver.insert(
-                            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                            contentValues
-                        )
-                        if (imageUri != null) {
-                            contentResolver.openOutputStream(imageUri).use { outputStream ->
-                                val inputStream = FileInputStream(photoFile)
-                                inputStream.copyTo(outputStream!!)
-                                outputStream.close()
-                                inputStream.close()
-                                contentValues.clear()
-                                contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
-                                contentResolver.update(imageUri, contentValues, null, null)
-                                showToast("Image saved to gallery!")
-                            }
-                        }
                     }
                 }
 
@@ -310,7 +319,7 @@ binding.ttsButton.setOnClickListener{
 
         CoroutineScope(Dispatchers.IO).launch {
             ocrResult = tess.utF8Text
-
+            speakOut()
             CoroutineScope(Dispatchers.Main).launch {
                 dialog.dismiss()
             }
@@ -337,7 +346,8 @@ binding.ttsButton.setOnClickListener{
             }
         } else {
             Log.e("TTS", "Initilization Failed!")
-        }    }
+        }
+    }
 
     private fun speakOut() {
         val text: String? = ocrResult
@@ -346,5 +356,34 @@ binding.ttsButton.setOnClickListener{
         tts!!.speak(text, TextToSpeech.QUEUE_FLUSH, null, "id1")
     }
 
+    fun savePhoto() {
+
+        val contentResolver = applicationContext.contentResolver
+        val contentValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, photoFile.name)
+            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+            put(
+                MediaStore.MediaColumns.RELATIVE_PATH,
+                Environment.DIRECTORY_PICTURES
+            )
+            put(MediaStore.Images.Media.IS_PENDING, 1)
+        }
+        val imageUri = contentResolver.insert(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            contentValues
+        )
+        if (imageUri != null) {
+            contentResolver.openOutputStream(imageUri).use { outputStream ->
+                val inputStream = FileInputStream(photoFile)
+                inputStream.copyTo(outputStream!!)
+                outputStream.close()
+                inputStream.close()
+                contentValues.clear()
+                contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
+                contentResolver.update(imageUri, contentValues, null, null)
+                showToast("Image saved to gallery!")
+            }
+        }
+    }
 
 }
