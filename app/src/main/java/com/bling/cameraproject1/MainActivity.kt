@@ -1,6 +1,8 @@
 package com.bling.cameraproject1
 
+import android.Manifest.permission.RECORD_AUDIO
 import android.content.ContentValues
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.AssetManager
 import android.graphics.Bitmap
@@ -10,6 +12,9 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.util.Log
 import android.view.View
@@ -17,10 +22,6 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageCapture
-import androidx.camera.core.ImageCaptureException
-import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toBitmap
@@ -36,6 +37,9 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import android.view.GestureDetector
 import android.view.MotionEvent
+import androidx.camera.core.*
+import androidx.camera.view.PreviewView
+import androidx.core.app.ActivityCompat
 import androidx.core.view.GestureDetectorCompat
 import java.lang.Math.abs
 
@@ -49,10 +53,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var photoFile: File
     private lateinit var photoURI: Uri
     var ocrResult: String? = null
-
+    private lateinit var recognitionListener: RecognitionListener
+    private lateinit var mRecognizer: SpeechRecognizer
     lateinit var tess: TessBaseAPI //Tesseract API 객체 생성
     var dataPath: String = "" //데이터 경로 변수 선언
-
+    var isLongPressed = false
     private var tts: TextToSpeech? = null
     var detector: GestureDetectorCompat? = null
     private val requestPermissionLauncher =
@@ -71,15 +76,63 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         setContentView(view)
         // Request camera permission if not already granted
         tts = TextToSpeech(this, this)
-        if (ContextCompat.checkSelfPermission(
-                this,
-                android.Manifest.permission.CAMERA
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
+        val permissions =
+            arrayOf(android.Manifest.permission.RECORD_AUDIO, android.Manifest.permission.CAMERA)
+
+        val deniedPermissions = permissions.filter {
+            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_DENIED
+        }
+
+        if (deniedPermissions.isNotEmpty()) {
+            // Request permissions
+            ActivityCompat.requestPermissions(this, deniedPermissions.toTypedArray(), 1)
             requestPermissionLauncher.launch(android.Manifest.permission.CAMERA)
+
         } else {
+            // Permissions already granted
             startCamera()
         }
+        binding.viewFinder.setScaleType(PreviewView.ScaleType.FIT_CENTER);
+
+
+        recognitionListener = object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle) {
+                Toast.makeText(this@MainActivity, "음성인식을 시작 합니다.", Toast.LENGTH_SHORT).show()
+
+            }
+
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onBufferReceived(buffer: ByteArray) {}
+            override fun onEndOfSpeech() {}
+            override fun onError(error: Int) {}
+            override fun onResults(results: Bundle) {
+                val voiceResults = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                if (voiceResults != null && voiceResults.isNotEmpty()) {
+                    val recognizedText = voiceResults[0]
+                    // Do something with the recognized text성
+                    Log.d("JIWOUNG","speakjiwoung888888: "+recognizedText)
+                    if (recognizedText.contains("재생")) {
+                        showToast("음성을 다시 재생합니다.")
+                        speakOut()
+                    } else if (recognizedText.contains("저장")) {
+                        savePhoto()
+                        showToast("사진을 저장합니다.")
+                    } else if (recognizedText.contains("삭제")) {
+                        stopTTS()
+                        showToast("재촬영 합니다.")
+                    }
+
+                }
+            }
+
+            override fun onPartialResults(partialResults: Bundle) {}
+            override fun onEvent(eventType: Int, params: Bundle) {}
+        }
+
+        mRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
+        mRecognizer.setRecognitionListener(recognitionListener);
+
 
         // Set up the directory where the captured images will be stored
         outputDirectory = getOutputDirectory()
@@ -88,7 +141,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         cameraExecutor = Executors.newSingleThreadExecutor()
 
         // Set up the capture button click listener
-
 
 
         dataPath = "$filesDir/tesseract/" //언어데이터의 경로 미리 지정
@@ -102,44 +154,79 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         detector = GestureDetectorCompat(this, object : GestureDetector.SimpleOnGestureListener() {
 
-
+            override fun onLongPress(e: MotionEvent) {
+                super.onLongPress(e)
+                Log.d("JIWOUNG", "speakjiwoung111111")
+                isLongPressed = true
+                if (tts != null) {
+                    if (tts!!.isSpeaking) {
+                        tts!!.stop()
+                    }
+                }
+                var intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+                intent.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, getPackageName());
+                intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ko-KR");
+                mRecognizer.startListening(intent);
+            }
 
             override fun onSingleTapUp(e: MotionEvent): Boolean {
-                Log.d("JIWOUNG","ewfnwwe:  "+"11")
+                Log.d("JIWOUNG", "speakjiwoung77777")
+
                 takePhoto()
                 return true
             }
 
-            override fun onFling(e1: MotionEvent, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
+            override fun onFling(
+                e1: MotionEvent,
+                e2: MotionEvent,
+                velocityX: Float,
+                velocityY: Float
+            ): Boolean {
                 // Handle the fling gesture here
                 val deltaX = e2.x - e1.x
                 val deltaY = e2.y - e1.y
-                if (abs(deltaX) > abs(deltaY) && abs(deltaX) > binding.captureButton.width / 2 && abs(velocityX) > 200) {
-                    if (deltaX < 0) {
+
+Log.d("JIWOUNG", "abscheck: "+abs(deltaX)+"|||"+abs(deltaY))
+
+                if ((deltaY > 0 && Math.abs(deltaY) > Math.abs(velocityY))) {
+                    stopTTS()
+                    showToast("재촬영 합니다.")
+
+                }
+                   else if (deltaX < 0) {
                         // Handle the fling gesture from right to left here
-                        Log.d("JIWOUNG","ewfnwwe:  "+"right-left")
+                        Log.d("JIWOUNG", "ewfnwwe:  " + "right-left")
                         showToast("음성을 다시 재생합니다.")
-speakOut()
-                    }else if ( deltaX>0){
-                        Log.d("JIWOUNG","ewfnwwe:  "+"left-right")
-                      savePhoto()
+                        speakOut()
+                    } else if (deltaX > 0) {
+                        Log.d("JIWOUNG", "ewfnwwe:  " + "left-right")
+                        savePhoto()
+                        stopTTS()
                         showToast("사진을 저장합니다.")
 
                     }
+
+                Log.d("JIWOUNG", "fliehc")
+                return true
+            }
+
+        })
+
+
+        binding.captureButton.setOnTouchListener { v, event ->
+            event?.let { detector?.onTouchEvent(it) }
+            when (event?.action) {
+                MotionEvent.ACTION_UP -> {
+                    if (isLongPressed) {
+                        isLongPressed = false
+                        mRecognizer.stopListening()
+
+                        Log.d("JIWOUNG", "speakjiwoung444444")
+                    }
                 }
-                Log.d("JIWOUNG","fliehc")
-                return true
             }
-
-        })
-
-        binding.captureButton.setOnTouchListener(object : View.OnTouchListener {
-            override fun onTouch(v: View?, event: MotionEvent?): Boolean {
-                event?.let { detector?.onTouchEvent(it) };
-                return true
-            }
-        })
-
+            super.onTouchEvent(event)
+        }
     }
 
 
@@ -152,6 +239,7 @@ speakOut()
 
             // Set up the preview
             val preview = Preview.Builder()
+                .setTargetAspectRatio(AspectRatio.RATIO_4_3) //디폴트 표준 비율
                 .build()
                 .also {
                     it.setSurfaceProvider(binding.viewFinder.surfaceProvider)
@@ -183,7 +271,7 @@ speakOut()
 
     private fun takePhoto() {
         // Get a file to save the image
-         photoFile = File(
+        photoFile = File(
             outputDirectory,
             SimpleDateFormat(
                 FILENAME_FORMAT,
@@ -328,12 +416,6 @@ speakOut()
 
     }
 
-
-    fun uriToBitmap(uri: Uri): Bitmap? {
-        val inputStream = applicationContext.contentResolver.openInputStream(uri)
-        return BitmapFactory.decodeStream(inputStream)
-    }
-
     override fun onInit(status: Int) {
         if (status === TextToSpeech.SUCCESS) {
             val result: Int = tts!!.setLanguage(Locale.KOREA)
@@ -351,6 +433,7 @@ speakOut()
 
     private fun speakOut() {
         val text: String? = ocrResult
+        Log.d("JIWOUNG","ocrresult: "+text)
         tts!!.setPitch(0.6.toFloat())
         tts!!.setSpeechRate(0.1.toFloat())
         tts!!.speak(text, TextToSpeech.QUEUE_FLUSH, null, "id1")
@@ -385,5 +468,15 @@ speakOut()
             }
         }
     }
+
+    fun stopTTS() {
+        if (tts != null) {
+            binding.imageView.visibility = View.GONE
+            if (tts!!.isSpeaking) {
+                tts!!.stop()
+            }
+        }
+    }
+
 
 }
